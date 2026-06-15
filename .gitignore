@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# 測試與快取
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE / 編輯器
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# RAVEN 執行產物
+raven_report.html
+/tmp/raven-*
+
+# 環境設定（含後端 api_key，絕不 commit）
+.env
