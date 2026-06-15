@@ -41,7 +41,6 @@ def test_ignores_plain_string():
 
 # ── 測試 4：直接測判斷函式（單元測試最小單位）──────────────
 def test_secret_name_detection():
-
     assert looks_like_secret_name("API_KEY")   is True
     assert looks_like_secret_name("password")  is True
     assert looks_like_secret_name("greeting")  is False

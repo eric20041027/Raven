@@ -44,11 +44,6 @@ def looks_like_secret_name(var_name: str) -> bool:
 
 
 def looks_like_secret_value(value: str) -> bool:
-    """(B) 字串值是否像密鑰。value 是「不含引號」的字串內容。
-    TODO（你寫）：符合任一就回 True：
-        - value 以 SECRET_VALUE_PREFIXES 任一開頭，或
-        - value 的長度 >= SECRET_MIN_LENGTH
-    """
     return value.startswith(SECRET_VALUE_PREFIXES) or len(value) >= SECRET_MIN_LENGTH
 
 def check(tree_root: Node, source: bytes) -> list[Finding]:
@@ -73,19 +68,6 @@ def check(tree_root: Node, source: bytes) -> list[Finding]:
         # 取字串的「內容」（不含引號）：找 string_content 子節點
         value = _string_content(right, source)
 
-        # ─────────────────────────────────────────────
-        # TODO（你寫）：選項 C 的判斷
-        #   if 變數名像密鑰 or 字串值像密鑰:
-        #       把這個命中加進 findings（用下面的範本）
-        # 範本：
-        #   findings.append(Finding(
-        #       rule_id="SECRET-001",
-        #       severity="HIGH",
-        #       cwe="CWE-798",
-        #       line=node.start_point[0] + 1,   # tree-sitter 行號從 0 起算，+1
-        #       snippet=node_text(node, source),
-        #   ))
-        # 實作：
         if looks_like_secret_name(var_name) or looks_like_secret_value(value):
             findings.append(Finding(
                 rule_id="SECRET-001",
