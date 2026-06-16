@@ -547,6 +547,20 @@ RAVEN v0.1.0  🪶  Risk Analysis & Vulnerability Examination Node
 
 ---
 
-*文件最後更新：2026-06-15*
-*專案狀態：規劃完成，準備進入 M1*
+*文件最後更新：2026-06-17*
+*專案狀態：M1 完成 ✅；M2 進行中（規則引擎 + 重構已完成，剩餘：SQLi/cmd/eval 規則、JS 支援、rich 彩色輸出）*
 *v1 原版備份：`RAVEN_project_plan.original.md`*
+
+---
+
+## 進度紀錄
+
+| 階段 | 狀態 | 重點 |
+|------|------|------|
+| 風險驗證 R1 | ✅ | oMLX + Ollama 雙後端皆驗證可行 |
+| 環境建置 | ✅ | uv 管理環境（Homebrew python3.11 libexpat 損壞，改用 uv） |
+| M1 Walking Skeleton | ✅ | 讀檔→AST→Hardcoded Secret 規則→CLI 輸出，4 測試綠 |
+| M2 規則引擎 | 🔵 進行中 | YAML 引擎完成（TDD）、CLI 已切換、寫死規則已移除；剩 SQLi/cmd/eval、JS、rich |
+| M3 LLM 解釋層 | ⬜ | 待開始 |
+| M4 Taint Analysis | ⬜ | 待開始 |
+| M5 收尾 | ⬜ | 待開始 |
