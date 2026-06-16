@@ -536,6 +536,7 @@ RAVEN v0.1.0  🪶  Risk Analysis & Vulnerability Examination Node
 - 後端自動偵測（層級 3）：自動發現使用者裝了哪個後端、零設定
 
 **技術面**
+- **tree-sitter query 語法**：M2 規則用自訂通用 pattern 格式（選項 B）；未來升級成 tree-sitter 原生 query 語言（選項 C，業界級、更強大）
 - 升級至 Qwen2.5-Coder-14B 4bit
 - embedding-based 相似漏洞搜尋
 - diff 模式：只掃 `git diff` 變更部分（加快 CI）

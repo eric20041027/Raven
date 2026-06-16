@@ -9,6 +9,7 @@ dependencies = [
     "tree-sitter>=0.23",
     "tree-sitter-python>=0.23",
     "click>=8.0",
+    "pyyaml>=6.0",        # M2：載入 YAML 規則定義
 ]
 
 [project.optional-dependencies]
