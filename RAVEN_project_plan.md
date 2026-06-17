@@ -548,7 +548,7 @@ RAVEN v0.1.0  🪶  Risk Analysis & Vulnerability Examination Node
 ---
 
 *文件最後更新：2026-06-17*
-*專案狀態：M1 ✅、M2 ✅ 完成；下一步 M3（LLM 解釋層）或 M4（taint analysis）*
+*專案狀態：M1 ✅、M2 ✅、M3 ✅ 完成；下一步 M4（taint analysis）或 M5（收尾）*
 *v1 原版備份：`RAVEN_project_plan.original.md`*
 
 ---
@@ -561,6 +561,6 @@ RAVEN v0.1.0  🪶  Risk Analysis & Vulnerability Examination Node
 | 環境建置 | ✅ | uv 管理環境（Homebrew python3.11 libexpat 損壞，改用 uv） |
 | M1 Walking Skeleton | ✅ | 讀檔→AST→Hardcoded Secret 規則→CLI 輸出，4 測試綠 |
 | M2 規則引擎 | ✅ | YAML 引擎(TDD)、handler 分派架構、4 條規則(Secret/SQLi/cmd/eval)、rich 彩色報告、語言抽象層(Python+JS)。16 測試綠 |
-| M3 LLM 解釋層 | ⬜ | 待開始 |
+| M3 LLM 解釋層 | ✅ | LLMClient(後端可設定)、config、--llm flag、reporter 顯示 AI 解釋、優雅降級。mock 測試。21 測試綠 |
 | M4 Taint Analysis | ⬜ | 待開始 |
 | M5 收尾 | ⬜ | 待開始 |
