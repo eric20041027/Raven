@@ -1,0 +1,10 @@
+#Unsafe Eval 規則
+id: EVAL-001
+name: Unsafe eval/exec
+severity: MEDIUM
+cwe: CWE-95
+message: 動態內容用 eval/exec 可執行任意程式碼的風險
+
+match:
+  node_type: call
+  function_name: [eval, exec]   # 危險的系統指令函式
