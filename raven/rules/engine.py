@@ -24,6 +24,7 @@ class Finding:
     line: int
     snippet: str
     message: str
+    llm_explanation: dict | None = None   # M3：LLM 產生的解釋；無 LLM 時維持 None
 
 
 @dataclass
