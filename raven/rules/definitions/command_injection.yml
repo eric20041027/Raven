@@ -8,4 +8,4 @@ message: 系統指令直接拼接使用者輸入，可能導致 Command Injectio
 match:
   node_type: call
   function_name: [system, popen, exec]   # 危險的系統指令函式
-  argument_has: binary_operator          # 參數含字串拼接 → 危險訊號
+  argument_has: concat   # 參數含字串拼接（concat 為語言中立概念）→ 危險訊號

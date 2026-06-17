@@ -1,21 +1,41 @@
 """tree-sitter 封裝：把原始碼解析成 AST，並提供遍歷器。
 
-這層把 tree-sitter 的 API 細節藏起來，讓上層（規則引擎）只需要：
-    parser = AstParser()
-    tree = parser.parse_file("foo.py")
-    for node in iter_nodes(tree.root_node):
-        ...  # 檢查每個節點
+支援多語言（Python / JavaScript）：依語言載入對應的 grammar。
+語言差異（節點名不同）不在這層處理 —— 這層只負責「解析」，
+節點名的語言對應交給規則引擎（engine.py）。
 """
 from tree_sitter import Language, Parser, Tree, Node
 import tree_sitter_python
+import tree_sitter_javascript
+
+
+# 副檔名 → 語言名
+_EXT_TO_LANG = {
+    ".py": "python",
+    ".js": "javascript",
+}
+
+# 語言名 → tree-sitter grammar（lazy 建立，避免重複初始化）
+_LANGUAGES = {
+    "python": Language(tree_sitter_python.language()),
+    "javascript": Language(tree_sitter_javascript.language()),
+}
+
+
+def detect_language(path: str) -> str | None:
+    """依副檔名偵測語言；不支援的副檔名回 None。"""
+    import pathlib
+    return _EXT_TO_LANG.get(pathlib.Path(path).suffix)
 
 
 class AstParser:
-    """目前只支援 Python；M2 會擴充多語言。"""
+    """依語言解析原始碼成 AST。"""
 
-    def __init__(self) -> None:
-        self._language = Language(tree_sitter_python.language())
-        self._parser = Parser(self._language)
+    def __init__(self, language: str = "python") -> None:
+        if language not in _LANGUAGES:
+            raise ValueError(f"不支援的語言：{language}")
+        self.language = language
+        self._parser = Parser(_LANGUAGES[language])
 
     def parse_source(self, source: bytes) -> Tree:
         """把 bytes 原始碼解析成 AST。tree-sitter 吃 bytes，不吃 str。"""
@@ -28,20 +48,12 @@ class AstParser:
 
 
 def iter_nodes(node: Node):
-    """深度優先走訪整棵樹，逐一 yield 每個節點。
-
-    規則引擎用這個來「逛過每一個節點」，檢查哪些節點是漏洞。
-    用 generator（yield）而非一次回傳整個 list —— 省記憶體，且寫法乾淨。
-    """
+    """深度優先走訪整棵樹，逐一 yield 每個節點。"""
     yield node
     for child in node.children:
         yield from iter_nodes(child)
 
 
 def node_text(node: Node, source: bytes) -> str:
-    """取一個節點對應的原始碼文字（str）。
-
-    AST 節點本身只記「位置」（start_byte~end_byte），要看內容得回原始碼切出來。
-    """
+    """取一個節點對應的原始碼文字（str）。"""
     return source[node.start_byte:node.end_byte].decode("utf-8", "replace")
-

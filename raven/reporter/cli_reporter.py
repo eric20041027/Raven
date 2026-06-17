@@ -24,7 +24,7 @@ def print_report(scan_path, file_count: int, rule_count: int, findings: list) ->
 
     # 掃描摘要
     console.print(f"掃描路徑：[cyan]{scan_path}[/cyan]")
-    console.print(f"掃描檔案：{file_count} 個 .py　掃描規則：{rule_count} 條")
+    console.print(f"掃描檔案：{file_count} 個　掃描規則：{rule_count} 條")
 
     if not findings:
         console.print("\n[bold green]✓ 沒有發現漏洞[/bold green]\n")

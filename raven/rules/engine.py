@@ -55,11 +55,13 @@ class RuleEngine:
             ))
         return cls(rules)
 
-    def scan(self, tree_root: Node, source: bytes) -> list[Finding]:
+    def scan(self, tree_root: Node, source: bytes, language: str = "python") -> list[Finding]:
+        """掃描 AST。language 決定用哪套節點名對應（語言抽象層）。"""
+        lang = _LANGUAGES[language]   # 該語言的「概念 → 實際節點名」對應
         findings: list[Finding] = []
         for node in iter_nodes(tree_root):
             for rule in self.rules:
-                if _node_matches(node, rule.match, source):
+                if _node_matches(node, rule.match, source, lang):
                     findings.append(Finding(
                         rule_id=rule.id,
                         severity=rule.severity,
@@ -72,31 +74,53 @@ class RuleEngine:
 
 
 # ═══════════════════════════════════════════════════════════
+#  語言抽象層：規則用「概念名」，引擎依語言翻成「實際節點名」
+# ═══════════════════════════════════════════════════════════
+
+# 概念名 → 各語言的實際 tree-sitter 節點名／欄位名
+_LANGUAGES = {
+    "python": {
+        "assignment": "assignment", "call": "call", "string": "string",
+        "string_content": "string_content", "concat": "binary_operator",
+        "left": "left", "right": "right", "function": "function", "arguments": "arguments",
+    },
+    "javascript": {
+        "assignment": "variable_declarator", "call": "call_expression", "string": "string",
+        "string_content": "string_fragment", "concat": "binary_expression",
+        "left": "name", "right": "value", "function": "function", "arguments": "arguments",
+    },
+}
+
+
+# ═══════════════════════════════════════════════════════════
 #  Handler 分派：每種 node_type 由對應的 handler 處理
 # ═══════════════════════════════════════════════════════════
 
-def _node_matches(node: Node, match: dict, source: bytes) -> bool:
-    """查表分派：找到對應 node_type 的 handler，交給它判斷。"""
-    if node.type != match["node_type"]:
+def _node_matches(node: Node, match: dict, source: bytes, lang: dict) -> bool:
+    """查表分派：先把規則的「概念 node_type」翻成該語言的實際節點名再比對。"""
+    concept = match["node_type"]               # 規則寫的概念名，如 "assignment"
+    actual_type = lang[concept]                # 翻成該語言實際名，如 JS 的 "variable_declarator"
+    if node.type != actual_type:
         return False
-    handler = _HANDLERS.get(match["node_type"])
+    handler = _HANDLERS.get(concept)           # handler 按「概念」分派，與語言無關
     if handler is None:
         return False
-    return handler(node, match, source)
+    return handler(node, match, source, lang)
 
 
-def _match_assignment(node: Node, match: dict, source: bytes) -> bool:
-    """處理 assignment 類規則（Hardcoded Secret 等）。"""
-    left = node.child_by_field_name("left")
-    right = node.child_by_field_name("right")
+def _match_assignment(node: Node, match: dict, source: bytes, lang: dict) -> bool:
+    """處理 assignment 類規則（Hardcoded Secret 等）。節點名透過 lang 翻譯。"""
+    left = node.child_by_field_name(lang["left"])
+    right = node.child_by_field_name(lang["right"])
     if left is None or right is None:
         return False
 
-    if "right_type" in match and right.type != match["right_type"]:
+    # right_type 也是概念名，翻成實際名再比對
+    if "right_type" in match and right.type != lang[match["right_type"]]:
         return False
 
     var_name = node_text(left, source)
-    value = _string_content(right, source)
+    value = _string_content(right, source, lang)
 
     any_of = match.get("any_of", [])
     if not any_of:
@@ -115,21 +139,21 @@ def _match_assignment(node: Node, match: dict, source: bytes) -> bool:
     return False
 
 
-def _match_call(node: Node, match: dict, source: bytes) -> bool:
+def _match_call(node: Node, match: dict, source: bytes, lang: dict) -> bool:
     """處理 call 類規則（SQL Injection 等）。
 
     match 可能含：
-        function_name: [...]      被呼叫的函式名須在清單內
-        argument_has: <node_type> 參數子樹須含該類型節點（如 binary_operator）
+        function_name: [...]   被呼叫的函式名須在清單內
+        argument_has: <概念>   參數子樹須含該概念節點（如 concat = 拼接）
     """
-    func_name = _call_function_name(node, source)   # 取被呼叫的函式名
-    args = node.child_by_field_name("arguments")     # argument_list 節點
+    func_name = _call_function_name(node, source, lang)
+    args = node.child_by_field_name(lang["arguments"])
 
-    allowed = match.get("function_name",[])
+    allowed = match.get("function_name", [])
     if allowed and func_name not in allowed:
         return False
     want = match.get("argument_has")
-    if want and not _subtree_has(args, want):
+    if want and not _subtree_has(args, lang[want]):
         return False
     return True
 
@@ -144,20 +168,21 @@ _HANDLERS = {
 
 # ─── 以下 helper 已幫你寫好 ───────────────────────────────
 
-def _string_content(string_node: Node, source: bytes) -> str:
-    """從 string 節點取出不含引號的內容。"""
+def _string_content(string_node: Node, source: bytes, lang: dict) -> str:
+    """從 string 節點取出不含引號的內容（字串內容的節點名依語言不同）。"""
+    target = lang["string_content"]   # python: string_content / js: string_fragment
     for child in string_node.children:
-        if child.type == "string_content":
+        if child.type == target:
             return node_text(child, source)
     return ""
 
 
-def _call_function_name(call_node: Node, source: bytes) -> str:
+def _call_function_name(call_node: Node, source: bytes, lang: dict) -> str:
     """取被呼叫的函式名。
     cursor.execute(...) → 'execute'（取最後一段）
     foo(...)            → 'foo'
     """
-    func = call_node.child_by_field_name("function")
+    func = call_node.child_by_field_name(lang["function"])
     if func is None:
         return ""
     text = node_text(func, source)
