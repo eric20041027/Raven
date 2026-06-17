@@ -11,6 +11,8 @@ import click
 from raven.parser.ast_parser import AstParser, detect_language
 from raven.rules.engine import RuleEngine
 from raven.reporter import cli_reporter
+from raven.llm.client import LLMClient, annotate_findings
+from raven.config import load_llm_config
 
 # 支援掃描的副檔名
 _SUPPORTED_EXTS = {".py", ".js"}
@@ -27,7 +29,10 @@ def cli() -> None:
 
 @cli.command()
 @click.argument("path", type=click.Path(exists=True))
-def scan(path: str) -> None:
+@click.option("--llm", is_flag=True, help="啟用本地 LLM 產生漏洞解釋（需後端，如 Ollama/oMLX）")
+@click.option("--base-url", default=None, help="LLM 後端 URL（覆寫環境變數 RAVEN_LLM_BASE_URL）")
+@click.option("--model", default=None, help="LLM 模型名（覆寫 RAVEN_LLM_MODEL）")
+def scan(path: str, llm: bool, base_url: str | None, model: str | None) -> None:
     """掃描 PATH（單一檔案或資料夾）找出漏洞。"""
     targets = _collect_source_files(path)
     if not targets:
@@ -50,7 +55,22 @@ def scan(path: str) -> None:
         for f in engine.scan(tree.root_node, source, language):
             all_findings.append((file_path, f))
 
+    # 可選的 LLM 解釋步驟（--llm 才啟用；client 為 None 時 annotate 原樣回傳）
+    client = _build_llm_client(llm, base_url, model)
+    findings_only = [f for _, f in all_findings]
+    annotated = annotate_findings(findings_only, client)
+    all_findings = list(zip((fp for fp, _ in all_findings), annotated))
+
     cli_reporter.print_report(path, len(targets), len(engine.rules), all_findings)
+
+
+def _build_llm_client(enabled: bool, base_url: str | None, model: str | None):
+    """依 --llm 決定是否建立 LLMClient。未啟用回 None（annotate 會原樣略過）。"""
+    if not enabled:
+        return None
+    cfg = load_llm_config(base_url=base_url, model=model)
+    click.echo(f"🤖 LLM 解釋已啟用（{cfg.base_url} / {cfg.model}），分析中可能需要一些時間…")
+    return LLMClient(base_url=cfg.base_url, model=cfg.model, api_key=cfg.api_key)
 
 
 def _collect_source_files(path: str) -> list[pathlib.Path]:

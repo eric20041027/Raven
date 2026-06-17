@@ -47,6 +47,17 @@ def _print_finding(file_path, f) -> None:
     body.append(f"{f.snippet}\n", style="white")
     body.append(f"⚠ {f.message}", style=color)
 
+    # 有 LLM 解釋才顯示（無 LLM 時略過，優雅降級的呈現面）
+    exp = f.llm_explanation
+    if exp:
+        body.append("\n\n🤖 AI 分析：\n", style="bold cyan")
+        if exp.get("why"):
+            body.append(f"  風險：{exp['why']}\n", style="white")
+        if exp.get("attack_scenario"):
+            body.append(f"  攻擊：{exp['attack_scenario']}\n", style="white")
+        if exp.get("fixed_code"):
+            body.append(f"  修正：{exp['fixed_code']}", style="green")
+
     # 面板標題顯示嚴重度與規則編號，邊框用嚴重度顏色
     title = f"[{color}][{f.severity}][/{color}] {f.rule_id} ({f.cwe})"
     console.print(Panel(body, title=title, title_align="left", border_style=color))
