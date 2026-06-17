@@ -17,6 +17,12 @@ from raven.config import load_llm_config
 # 支援掃描的副檔名
 _SUPPORTED_EXTS = {".py", ".js"}
 
+# 預設忽略的目錄（依賴/系統目錄，不該掃 —— 業界共識）
+_IGNORE_DIRS = {
+    ".venv", "venv", "env", "node_modules", ".git",
+    "__pycache__", ".pytest_cache", "dist", "build", ".egg-info",
+}
+
 # 規則定義資料夾（相對於套件位置，確保任何工作目錄下都找得到）
 RULES_DIR = str(pathlib.Path(__file__).parent / "rules" / "definitions")
 
@@ -74,12 +80,20 @@ def _build_llm_client(enabled: bool, base_url: str | None, model: str | None):
 
 
 def _collect_source_files(path: str) -> list[pathlib.Path]:
-    """把輸入路徑展開成一串支援的原始碼檔（.py / .js）。"""
+    """把輸入路徑展開成一串支援的原始碼檔（.py / .js），跳過依賴目錄。"""
     p = pathlib.Path(path)
     if p.is_file():
         return [p] if p.suffix in _SUPPORTED_EXTS else []
-    # 資料夾：遞迴找所有支援副檔名的檔
-    return sorted(f for f in p.rglob("*") if f.suffix in _SUPPORTED_EXTS)
+    # 資料夾：遞迴找所有支援副檔名的檔，但排除依賴/系統目錄
+    return sorted(
+        f for f in p.rglob("*")
+        if f.suffix in _SUPPORTED_EXTS and not _is_ignored(f)
+    )
+
+
+def _is_ignored(file_path: pathlib.Path) -> bool:
+    """檔案路徑中是否含有任何忽略目錄。"""
+    return any(part in _IGNORE_DIRS for part in file_path.parts)
 
 
 if __name__ == "__main__":
