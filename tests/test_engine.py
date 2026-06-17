@@ -18,8 +18,9 @@ def _scan_with_engine(source_code: str):
 # ── 引擎能載入 YAML 規則 ──────────────────────────────
 def test_engine_loads_rules():
     engine = RuleEngine.from_directory("raven/rules/definitions/")
-    assert len(engine.rules) >= 1          # 至少載到 1 條規則
-    assert engine.rules[0].id == "SECRET-001"
+    assert len(engine.rules) >= 1
+    rule_ids = [r.id for r in engine.rules]
+    assert "SECRET-001" in rule_ids       # 不依賴順序，只確認有被載入
 
 
 # ── 引擎跑出跟 M1 一樣的結果：正例該抓到 ──────────────

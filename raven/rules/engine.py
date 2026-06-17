@@ -125,15 +125,6 @@ def _match_call(node: Node, match: dict, source: bytes) -> bool:
     func_name = _call_function_name(node, source)   # 取被呼叫的函式名
     args = node.child_by_field_name("arguments")     # argument_list 節點
 
-    # ─────────────────────────────────────────────
-    # TODO（你寫）：兩個條件「都」要成立才算命中（and）：
-    #   1. function_name：若 match 有 "function_name"，func_name 須在該清單裡
-    #   2. argument_has ：若 match 有 "argument_has"，args 子樹裡須含該類型節點
-    # 提示：
-    #   - allowed = match.get("function_name")  →  if allowed and func_name not in allowed: return False
-    #   - want = match.get("argument_has")      →  用下面的 _subtree_has(args, want) 檢查
-    #   - 兩個條件都通過 → return True
-    # ─────────────────────────────────────────────
     allowed = match.get("function_name",[])
     if allowed and func_name not in allowed:
         return False

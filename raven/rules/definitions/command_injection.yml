@@ -1,0 +1,11 @@
+#Command Injection 規則
+id: CMD-001
+name: Command Injection
+severity: HIGH
+cwe: CWE-78
+message: 系統指令直接拼接使用者輸入，可能導致 Command Injection（任意指令執行）。建議避免拼接，改用參數陣列（如 subprocess.run([...]）。
+
+match:
+  node_type: call
+  function_name: [system, popen, exec]   # 危險的系統指令函式
+  argument_has: binary_operator          # 參數含字串拼接 → 危險訊號
