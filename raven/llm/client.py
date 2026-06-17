@@ -4,31 +4,46 @@
 任何 LLM 失敗（無後端、連線錯、JSON 壞）都「優雅降級」為 None，
 絕不讓 LLM 問題拖垮整個掃描。
 
-M3 第一刀：先立「可選層 + 優雅降級」骨架。
-真正呼叫後端的實作在下一刀填入（目前 explain 回 None）。
+M3：可選的 LLM 增強層。explain 呼叫 OpenAI-compatible 後端，
+任何失敗（無後端 / 連線錯 / JSON 壞）都回 None（優雅降級）。
 """
+import json
 from dataclasses import replace
+
+from openai import OpenAI
+
+from raven.llm.prompts import SYSTEM_PROMPT, build_user_prompt
 
 
 class LLMClient:
     """呼叫 OpenAI-compatible 後端產生漏洞解釋。
 
     後端可設定（base_url / api_key / model）——已由 R1 驗證：
-    oMLX 需 Authorization: Bearer key、Ollama 不需 key。
+    oMLX 需 Authorization: Bearer key、Ollama 不需 key（故 api_key 可選）。
     """
 
     def __init__(self, base_url: str, model: str, api_key: str | None = None) -> None:
-        self.base_url = base_url
         self.model = model
-        self.api_key = api_key
+        # Ollama 不需 key，但 openai SDK 要求非空字串，故給 placeholder
+        self._client = OpenAI(base_url=base_url, api_key=api_key or "not-needed")
 
     def explain(self, finding) -> dict | None:
-        """產生單一漏洞的解釋；任何失敗回 None（優雅降級）。
-
-        下一刀填入真正的 API 呼叫。目前先回 None，
-        讓「沒有 LLM 解釋」這條路徑先成立並被測試釘住。
-        """
-        return None
+        """產生單一漏洞的解釋；任何失敗回 None（優雅降級）。"""
+        try:
+            response = self._client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": build_user_prompt(finding)},
+                ],
+                temperature=0.1,                       # 低溫，輸出穩定
+                max_tokens=512,
+                response_format={"type": "json_object"},  # 強制 JSON
+            )
+            return json.loads(response.choices[0].message.content)
+        except Exception:
+            # 優雅降級：無後端 / 連線錯 / JSON 壞 → 不崩，只是沒解釋
+            return None
 
 
 def annotate_findings(findings: list, client: LLMClient | None) -> list:
