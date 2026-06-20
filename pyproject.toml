@@ -8,6 +8,7 @@ requires-python = ">=3.11"
 dependencies = [
     "tree-sitter>=0.23",
     "tree-sitter-python>=0.23",
+    "tree-sitter-javascript>=0.23",   # M2：JavaScript 支援
     "click>=8.0",
     "pyyaml>=6.0",        # M2：載入 YAML 規則
     "rich>=13.0",         # M2：terminal 彩色輸出
