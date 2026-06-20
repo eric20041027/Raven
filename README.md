@@ -4,18 +4,31 @@
 
 ### Risk Analysis & Vulnerability Examination Node
 
-> 本地 LLM 驅動的靜態程式碼漏洞掃描器（SAST）。輸入程式碼路徑，自動解析 AST、比對漏洞規則，並（可選）由本地 LLM 產出人話說明與修補建議——**全程離線、零雲端**。
+> 本地 LLM 驅動的靜態程式碼漏洞掃描器（SAST）。輸入本地路徑或 GitHub repo URL，自動解析 AST、比對漏洞規則、追蹤污染資料流，並（可選）由本地 LLM 產出人話說明與修補建議——**全程離線、零雲端**。
 
 ---
 
 ## 這是什麼
 
-RAVEN 用 [tree-sitter](https://tree-sitter.github.io/tree-sitter/) 把程式碼解析成抽象語法樹（AST），再用 YAML 定義的規則在樹上比對，找出常見的安全漏洞。可選地，它會把命中的漏洞丟給本地 LLM（透過 OpenAI-compatible API，如 Ollama 或 oMLX）產生白話風險說明與修補建議。
+RAVEN 用 [tree-sitter](https://tree-sitter.github.io/tree-sitter/) 把程式碼解析成抽象語法樹（AST），在樹上以兩種互補方式找漏洞：
+
+1. **Pattern matching** — YAML 定義的規則直接比對 AST 節點結構。
+2. **Taint analysis** — 追蹤使用者輸入（source）是否經資料流抵達危險函式（sink），比純語法比對更準、誤報更少。
+
+可選地，它會把命中的漏洞丟給本地 LLM（透過 OpenAI-compatible API，如 Ollama 或 oMLX）產生白話風險說明與修補建議。
 
 **設計原則：**
 - **規則引擎為核心、必跑、零外部依賴**——沒有 LLM 後端也能掃出漏洞
 - **LLM 為可選增強層**——後端可設定（`base_url` / `api_key` / `model`），可缺席時優雅降級
-- **資料驅動規則**——新增規則 = 寫一個 YAML 檔，不用改程式碼
+- **資料驅動規則**——新增 pattern 規則 = 寫一個 YAML 檔，不用改程式碼
+
+---
+
+## ⚠️ 專案定位
+
+RAVEN 是一個**學習導向的實驗性專案**，用來實作並理解 SAST 的核心概念（AST 解析、規則引擎、taint analysis、LLM 整合）。它**不是生產級工具**，請勿用於真實的安全稽核或在正式環境取代成熟的 SAST 產品。
+
+偵測能力刻意保持精簡與透明：規則集小、taint analysis 為 intra-procedural（單一函式內），目的是把每個概念實作清楚、可驗證，而非追求覆蓋率。
 
 ---
 
@@ -45,37 +58,65 @@ uv pip install -e ".[dev]"
 # 掃描單一檔案
 .venv/bin/raven scan path/to/file.py
 
-# 掃描整個資料夾（遞迴掃所有 .py）
+# 掃描整個資料夾（遞迴掃所有 .py / .js）
 .venv/bin/raven scan path/to/project/
+
+# 掃描 GitHub repo（自動 clone 到暫存目錄、掃完清理）
+.venv/bin/raven scan https://github.com/user/repo.git
 
 # 試掃內建的範例漏洞檔
 .venv/bin/raven scan tests/fixtures/
 ```
 
-輸出範例：
+### 輸出格式
+
+```bash
+# 終端機彩色輸出（預設）
+.venv/bin/raven scan tests/fixtures/ --format text
+
+# 機器可讀的 JSON
+.venv/bin/raven scan tests/fixtures/ --format json
+
+# 自包含、可互動的 HTML 報告（嚴重度過濾 + 程式碼高亮）
+.venv/bin/raven scan tests/fixtures/ --format html -o report.html
+```
+
+### 啟用 LLM 解釋（可選）
+
+```bash
+.venv/bin/raven scan tests/fixtures/ --llm
+```
+
+文字輸出範例：
 
 ```
-RAVEN v0.1.0  🪶  Risk Analysis & Vulnerability Examination Node
+╭─ [HIGH] SQL-TAINT-001 (CWE-89) ──────────────────────────────────────────────╮
+│ 檔案：tests/fixtures/vuln_sqli.py，第 4 行                                   │
+│ cursor.execute("SELECT * FROM users WHERE id=" + user_input)                 │
+│ ⚠ 使用者輸入經資料流流入 SQL 查詢（taint 分析確認 source→sink）              │
+╰──────────────────────────────────────────────────────────────────────────────╯
 
-掃描路徑：tests/fixtures/vuln_secret.py
-掃描檔案：1 個 .py
-掃描規則：1 條
-────────────────────────────────────────────────────
-
-[HIGH]  SECRET-001 (CWE-798)
-  檔案：tests/fixtures/vuln_secret.py，第 4 行
-  程式碼：API_KEY = "sk-prod-abc123def456ghi789"
-  ⚠ 密鑰寫死於原始碼，任何能讀到程式碼的人都能取得憑證。建議改用環境變數。
-
-────────────────────────────────────────────────────
-掃描完成：發現 1 個漏洞
+掃描完成：發現 8 個漏洞　(HIGH: 6，MEDIUM: 2，LOW: 0)
 ```
+
+HTML 報告為**單一自包含檔案**：CSS / JS 全內嵌、Pygments 程式碼高亮寫死進檔案、不依賴任何 CDN，離線打開即可使用，並可在瀏覽器端按嚴重度即時過濾。
+
+---
+
+## 掃描 GitHub repo 的安全邊界
+
+`raven scan <url>` 把工具指向了任意網路輸入，因此 clone 流程刻意設了防線：
+
+- **只接受 `http(s)` URL**——擋掉 `git@` / `ssh://` / `file://`，避免存取本機檔案系統或誤用本機 SSH 金鑰。
+- **淺層 clone（`--depth 1`）**——只抓最新一版，省時省空間。
+- **超時保護**——clone 設有逾時上限，避免惡意或超大 repo 卡死。
+- **保證清理**——clone 進 `tempfile` 暫存目錄，用 context manager 確保離開時刪除，即使掃描中途出錯。
 
 ---
 
 ## 規則格式
 
-規則定義在 `raven/rules/definitions/*.yml`，每個檔一條規則。引擎會自動載入該資料夾下所有規則。
+Pattern matching 規則定義在 `raven/rules/definitions/*.yml`，每個檔一條規則。引擎會自動載入該資料夾下所有規則。
 
 ```yaml
 id: SECRET-001
@@ -90,7 +131,6 @@ match:
   any_of:                      # 以下任一成立即命中
     - name_contains: [key, password, secret, token, api]   # 變數名含關鍵字
     - value_prefix: [sk-, ghp_, xox, AKIA]                 # 字串值符合已知前綴
-    - value_min_length: 16                                  # 字串夠長
 ```
 
 **新增規則**：在 `definitions/` 下新增一個 `.yml` 檔即可，無需改程式碼。
@@ -112,19 +152,40 @@ ollama pull qwen2.5-coder:7b
 ollama serve
 ```
 
+也可用環境變數或 CLI 旗標覆寫後端設定：
+
+```bash
+.venv/bin/raven scan src/ --llm \
+  --base-url http://localhost:11434/v1 \
+  --model qwen2.5-coder:7b
+```
+
 > LLM 層為**可選增強**——沒有後端時，RAVEN 仍以純規則引擎運作。
+
+---
+
+## 偵測能力
+
+| 漏洞 | CWE | 偵測法 | 狀態 |
+|------|-----|--------|------|
+| Hardcoded Secret | CWE-798 | pattern matching | ✅ |
+| SQL Injection | CWE-89 | pattern matching + taint analysis | ✅ |
+| Command Injection | CWE-78 | pattern matching | ✅ |
+| Unsafe eval | CWE-95 | pattern matching | ✅ |
+
+支援語言：**Python**（pattern + taint）、**JavaScript**（pattern）。
 
 ---
 
 ## 開發狀態
 
-本專案以五個階段漸進開發（垂直切片）：
+本專案以五個垂直切片漸進開發，五個里程碑皆已完成：
 
 - [x] **M1** — Walking Skeleton：tree-sitter AST + Hardcoded Secret 規則 + CLI
-- [ ] **M2** — 規則引擎（進行中）：YAML 規則引擎 ✅、多規則 / JS 支援 / rich 彩色輸出（待完成）
-- [ ] **M3** — LLM 解釋層（後端可設定、優雅降級）
-- [ ] **M4** — Taint Analysis（資料流分析）
-- [ ] **M5** — HTML / JSON 報告、GitHub repo 輸入、CI
+- [x] **M2** — 資料驅動規則引擎：YAML 規則、多規則（SQL / cmd / eval）、JavaScript 支援、rich 彩色輸出
+- [x] **M3** — LLM 解釋層：OpenAI-compatible 後端、可設定、優雅降級
+- [x] **M4** — Taint Analysis：intra-procedural source→sink 資料流追蹤
+- [x] **M5** — JSON / HTML 報告、GitHub repo URL 輸入、GitHub Actions CI
 
 詳見 [RAVEN_project_plan.md](RAVEN_project_plan.md)。
 
@@ -137,26 +198,18 @@ ollama serve
 .venv/bin/pytest -v
 ```
 
-目前偵測能力：
-
-| 漏洞 | CWE | 偵測法 | 狀態 |
-|------|-----|--------|------|
-| Hardcoded Secret | CWE-798 | pattern matching | ✅ |
-| SQL Injection | CWE-89 | pattern + taint（M4） | 規劃中 |
-| Command Injection | CWE-78 | pattern | 規劃中 |
-| Unsafe eval | CWE-95 | pattern | 規劃中 |
-
 ---
 
 ## 技術棧
 
 - **Python 3.11+**（uv 管理環境）
-- **tree-sitter** — AST 解析
+- **tree-sitter** — AST 解析（Python / JavaScript）
 - **PyYAML** — 規則定義
 - **Click** — CLI
+- **Pygments** — HTML 報告的程式碼高亮
+- **OpenAI SDK** — 串接本地 LLM 後端
 - **pytest** — 測試
-- **OpenAI SDK**（M3）— 串接本地 LLM 後端
 
 ---
 
-*RAVEN 是一個學習導向的專案，逐階段開發中。*
+*RAVEN 是一個學習導向的實驗專案，用來把 SAST 的核心概念實作清楚、可驗證。*
