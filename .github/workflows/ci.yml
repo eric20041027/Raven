@@ -1,0 +1,31 @@
+# GitHub Actions CI：每次 push / PR 自動跑測試
+# 在乾淨的雲端機器上從零建環境 → 跑 pytest，確保專案隨時可從頭裝起來並通過測試。
+name: CI
+
+# 觸發時機：push 到任何分支、或開 PR 時
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest    # 在 GitHub 提供的 Ubuntu 雲端機上跑
+
+    steps:
+      # 1. 把 repo 的程式碼 checkout 到雲端機
+      - name: Checkout 程式碼
+        uses: actions/checkout@v4
+
+      # 2. 安裝 uv（用官方 action，順便快取以加速）
+      - name: 安裝 uv
+        uses: astral-sh/setup-uv@v5
+
+      # 3. 用 uv 建環境並安裝專案依賴（含 dev）
+      - name: 安裝依賴
+        run: |
+          uv venv --python 3.11 .venv
+          uv pip install -e ".[dev]"
+
+      # 4. 跑測試
+      - name: 跑 pytest
+        run: .venv/bin/pytest -v
