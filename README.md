@@ -1,5 +1,7 @@
 # RAVEN 🪶
 
+[![CI](https://github.com/eric20041027/Raven/actions/workflows/ci.yml/badge.svg)](https://github.com/eric20041027/Raven/actions/workflows/ci.yml)
+
 ### Risk Analysis & Vulnerability Examination Node
 
 > 本地 LLM 驅動的靜態程式碼漏洞掃描器（SAST）。輸入程式碼路徑，自動解析 AST、比對漏洞規則，並（可選）由本地 LLM 產出人話說明與修補建議——**全程離線、零雲端**。
