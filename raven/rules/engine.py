@@ -8,12 +8,34 @@
     不同的 node_type 由不同的 handler 函式處理，引擎查 _HANDLERS 表分派。
     要支援新節點類型 → 新增一個 handler 並註冊，_node_matches 不用改。
 """
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+import math
 import yaml
 from tree_sitter import Node
 
 from raven.parser.ast_parser import iter_nodes, node_text
+
+
+def _shannon_entropy(value: str) -> float:
+    """算字串的 Shannon entropy（亂度，單位 bit/字元）。
+
+    H = -Σ p(c)·log2 p(c)，對每個出現的字元 c。直覺：字元分布越均勻、越
+    不可預測，熵越高。真密鑰（隨機字串）熵高，一般可讀字串（重複多）熵低。
+
+    用「亂度」取代「長度」當密鑰信號 —— 長度會把 URL/模型名/prompt 都誤判，
+    亂度則能區分「看起來像亂碼」與「人看得懂」的字串。
+    """
+    if not value:
+        return 0.0
+    n = len(value)
+    entropy = -sum(
+        (count / n) * math.log2(count / n)
+        for count in Counter(value).values()
+    )
+    # abs 正規化掉浮點負零（單一字元時算出 -0.0），讓 0 就是乾淨的 0。
+    return abs(entropy)
 
 
 @dataclass
@@ -123,20 +145,44 @@ def _match_assignment(node: Node, match: dict, source: bytes, lang: dict) -> boo
     var_name = node_text(left, source)
     value = _string_content(right, source, lang)
 
+    # any_of：任一條件成立即命中；all_of：全部條件成立才命中。
+    # 兩者可擇一使用；都沒給就只靠上面的結構條件（right_type 等）命中。
     any_of = match.get("any_of", [])
-    if not any_of:
+    if any_of and any(_cond_matches(c, var_name, value) for c in any_of):
         return True
 
-    for cond in any_of:
-        names = cond.get("name_contains", [])
-        if any(hint in var_name.lower() for hint in names):
-            return True
-        prefixes = cond.get("value_prefix", [])
-        if prefixes and value.startswith(tuple(prefixes)):
-            return True
-        min_len = cond.get("value_min_length")
-        if min_len and len(value) >= min_len:
-            return True
+    all_of = match.get("all_of", [])
+    if all_of and all(_cond_matches(c, var_name, value) for c in all_of):
+        return True
+
+    return not any_of and not all_of
+
+
+def _cond_matches(cond: dict, var_name: str, value: str) -> bool:
+    """單一條件是否成立。any_of / all_of 共用這份判斷邏輯（DRY）。
+
+    支援的條件：
+      name_contains      變數名含任一關鍵字
+      value_prefix       字串值符合任一已知前綴
+      value_min_length   字串值長度達標（粗信號，配合 entropy 用較穩）
+      value_entropy_min  字串值的 Shannon 熵達標（亂度信號）
+    """
+    names = cond.get("name_contains", [])
+    if names and any(hint in var_name.lower() for hint in names):
+        return True
+
+    prefixes = cond.get("value_prefix", [])
+    if prefixes and value.startswith(tuple(prefixes)):
+        return True
+
+    min_len = cond.get("value_min_length")
+    if min_len is not None and len(value) >= min_len:
+        return True
+
+    min_entropy = cond.get("value_entropy_min")
+    if min_entropy is not None and _shannon_entropy(value) >= min_entropy:
+        return True
+
     return False
 
 
