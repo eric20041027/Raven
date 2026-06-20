@@ -13,7 +13,7 @@ import click
 from raven.parser.ast_parser import AstParser, detect_language
 from raven.rules.engine import RuleEngine
 from raven.rules.taint import analyze
-from raven.reporter import cli_reporter, json_reporter
+from raven.reporter import cli_reporter, json_reporter, html_reporter
 from raven.llm.client import LLMClient, annotate_findings
 from raven.config import load_llm_config
 from raven.source import resolve_source, is_url
@@ -42,10 +42,12 @@ def cli() -> None:
 @click.option("--llm", is_flag=True, help="啟用本地 LLM 產生漏洞解釋（需後端，如 Ollama/oMLX）")
 @click.option("--base-url", default=None, help="LLM 後端 URL（覆寫環境變數 RAVEN_LLM_BASE_URL）")
 @click.option("--model", default=None, help="LLM 模型名（覆寫 RAVEN_LLM_MODEL）")
-@click.option("--format", "output_format", type=click.Choice(["text", "json"]),
-              default="text", help="輸出格式：text（彩色）或 json（機器可讀）")
+@click.option("--format", "output_format", type=click.Choice(["text", "json", "html"]),
+              default="text", help="輸出格式：text（彩色）/ json（機器可讀）/ html（可視化報告）")
+@click.option("-o", "--output", "output_file", default=None,
+              type=click.Path(), help="輸出檔路徑（html 格式建議指定，如 report.html）")
 def scan(target: str, llm: bool, base_url: str | None, model: str | None,
-         output_format: str) -> None:
+         output_format: str, output_file: str | None) -> None:
     """掃描 TARGET 找出漏洞。
 
     TARGET 可以是本地檔案/資料夾，或 http(s) 的 GitHub repo URL
@@ -57,14 +59,15 @@ def scan(target: str, llm: bool, base_url: str | None, model: str | None,
     # resolve_source：URL → clone 到暫存目錄並在離開時清理；本地路徑 → 原樣使用。
     try:
         with resolve_source(target) as scan_root:
-            _scan_directory(target, scan_root, llm, base_url, model, output_format)
+            _scan_directory(target, scan_root, llm, base_url, model,
+                            output_format, output_file)
     except Exception as exc:  # 來源解析失敗（非法 URL、clone 失敗等）
         raise click.ClickException(str(exc)) from exc
 
 
 def _scan_directory(display_name: str, scan_root: str, llm: bool,
                     base_url: str | None, model: str | None,
-                    output_format: str) -> None:
+                    output_format: str, output_file: str | None) -> None:
     """掃描 scan_root 下的原始碼並輸出報告。
 
     display_name 是報告標題用的名稱（URL 時顯示原始 URL，而非暫存路徑）。
@@ -101,9 +104,26 @@ def _scan_directory(display_name: str, scan_root: str, llm: bool,
     annotated = annotate_findings(findings_only, client)
     all_findings = list(zip((fp for fp, _ in all_findings), annotated))
 
-    # 依格式選 reporter（text 彩色 / json 機器可讀）
+    # 依格式輸出報告。
+    if output_format == "html":
+        _emit_html(display_name, len(targets), len(engine.rules),
+                   all_findings, output_file)
+        return
     reporter = json_reporter if output_format == "json" else cli_reporter
     reporter.print_report(display_name, len(targets), len(engine.rules), all_findings)
+
+
+def _emit_html(display_name: str, file_count: int, rule_count: int,
+               findings: list, output_file: str | None) -> None:
+    """產 HTML 報告：有 -o 就寫檔，沒有就印到 stdout。"""
+    document = html_reporter.print_report(
+        display_name, file_count, rule_count, findings
+    )
+    if output_file:
+        pathlib.Path(output_file).write_text(document, encoding="utf-8")
+        click.echo(f"📄 HTML 報告已輸出：{output_file}")
+    else:
+        click.echo(document)
 
 
 def _merge_findings(pattern_findings: list, taint_findings: list) -> list:

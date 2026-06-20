@@ -13,6 +13,7 @@ dependencies = [
     "pyyaml>=6.0",        # M2：載入 YAML 規則
     "rich>=13.0",         # M2：terminal 彩色輸出
     "openai>=1.0",        # M3：呼叫 OpenAI-compatible 後端（Ollama / oMLX）定義
+    "pygments>=2.0",      # M5：HTML 報告的伺服端程式碼高亮
 ]
 
 [project.optional-dependencies]
