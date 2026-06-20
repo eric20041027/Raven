@@ -2,8 +2,10 @@
 
 用法：
     raven scan <path>      # path 可以是單一 .py 檔，或一個資料夾（遞迴掃所有 .py）
+    raven scan <url>       # http(s) 的 GitHub repo URL，自動 clone 來掃、掃完清理
 
 M2：CLI 走 YAML 規則引擎（取代 M1 寫死的 secret_rule）。
+M5：支援 GitHub repo URL 輸入（見 raven/source.py）。
 """
 import pathlib
 import click
@@ -14,6 +16,7 @@ from raven.rules.taint import analyze
 from raven.reporter import cli_reporter, json_reporter
 from raven.llm.client import LLMClient, annotate_findings
 from raven.config import load_llm_config
+from raven.source import resolve_source, is_url
 
 # 支援掃描的副檔名
 _SUPPORTED_EXTS = {".py", ".js"}
@@ -35,16 +38,38 @@ def cli() -> None:
 
 
 @cli.command()
-@click.argument("path", type=click.Path(exists=True))
+@click.argument("target")
 @click.option("--llm", is_flag=True, help="啟用本地 LLM 產生漏洞解釋（需後端，如 Ollama/oMLX）")
 @click.option("--base-url", default=None, help="LLM 後端 URL（覆寫環境變數 RAVEN_LLM_BASE_URL）")
 @click.option("--model", default=None, help="LLM 模型名（覆寫 RAVEN_LLM_MODEL）")
 @click.option("--format", "output_format", type=click.Choice(["text", "json"]),
               default="text", help="輸出格式：text（彩色）或 json（機器可讀）")
-def scan(path: str, llm: bool, base_url: str | None, model: str | None,
+def scan(target: str, llm: bool, base_url: str | None, model: str | None,
          output_format: str) -> None:
-    """掃描 PATH（單一檔案或資料夾）找出漏洞。"""
-    targets = _collect_source_files(path)
+    """掃描 TARGET 找出漏洞。
+
+    TARGET 可以是本地檔案/資料夾，或 http(s) 的 GitHub repo URL
+    （URL 會自動 clone 到暫存目錄掃描，掃完清理）。
+    """
+    if is_url(target):
+        click.echo(f"📥 clone 中：{target}")
+
+    # resolve_source：URL → clone 到暫存目錄並在離開時清理；本地路徑 → 原樣使用。
+    try:
+        with resolve_source(target) as scan_root:
+            _scan_directory(target, scan_root, llm, base_url, model, output_format)
+    except Exception as exc:  # 來源解析失敗（非法 URL、clone 失敗等）
+        raise click.ClickException(str(exc)) from exc
+
+
+def _scan_directory(display_name: str, scan_root: str, llm: bool,
+                    base_url: str | None, model: str | None,
+                    output_format: str) -> None:
+    """掃描 scan_root 下的原始碼並輸出報告。
+
+    display_name 是報告標題用的名稱（URL 時顯示原始 URL，而非暫存路徑）。
+    """
+    targets = _collect_source_files(scan_root)
     if not targets:
         click.echo("找不到任何可掃描的原始碼檔（.py / .js）。")
         return
@@ -78,7 +103,7 @@ def scan(path: str, llm: bool, base_url: str | None, model: str | None,
 
     # 依格式選 reporter（text 彩色 / json 機器可讀）
     reporter = json_reporter if output_format == "json" else cli_reporter
-    reporter.print_report(path, len(targets), len(engine.rules), all_findings)
+    reporter.print_report(display_name, len(targets), len(engine.rules), all_findings)
 
 
 def _merge_findings(pattern_findings: list, taint_findings: list) -> list:
