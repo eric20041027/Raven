@@ -11,7 +11,7 @@ import click
 from raven.parser.ast_parser import AstParser, detect_language
 from raven.rules.engine import RuleEngine
 from raven.rules.taint import analyze
-from raven.reporter import cli_reporter
+from raven.reporter import cli_reporter, json_reporter
 from raven.llm.client import LLMClient, annotate_findings
 from raven.config import load_llm_config
 
@@ -39,7 +39,10 @@ def cli() -> None:
 @click.option("--llm", is_flag=True, help="啟用本地 LLM 產生漏洞解釋（需後端，如 Ollama/oMLX）")
 @click.option("--base-url", default=None, help="LLM 後端 URL（覆寫環境變數 RAVEN_LLM_BASE_URL）")
 @click.option("--model", default=None, help="LLM 模型名（覆寫 RAVEN_LLM_MODEL）")
-def scan(path: str, llm: bool, base_url: str | None, model: str | None) -> None:
+@click.option("--format", "output_format", type=click.Choice(["text", "json"]),
+              default="text", help="輸出格式：text（彩色）或 json（機器可讀）")
+def scan(path: str, llm: bool, base_url: str | None, model: str | None,
+         output_format: str) -> None:
     """掃描 PATH（單一檔案或資料夾）找出漏洞。"""
     targets = _collect_source_files(path)
     if not targets:
@@ -73,7 +76,9 @@ def scan(path: str, llm: bool, base_url: str | None, model: str | None) -> None:
     annotated = annotate_findings(findings_only, client)
     all_findings = list(zip((fp for fp, _ in all_findings), annotated))
 
-    cli_reporter.print_report(path, len(targets), len(engine.rules), all_findings)
+    # 依格式選 reporter（text 彩色 / json 機器可讀）
+    reporter = json_reporter if output_format == "json" else cli_reporter
+    reporter.print_report(path, len(targets), len(engine.rules), all_findings)
 
 
 def _merge_findings(pattern_findings: list, taint_findings: list) -> list:
