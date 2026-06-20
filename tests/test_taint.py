@@ -44,12 +44,21 @@ def test_static_query_not_reported():
     assert len(findings) == 0
 
 
-# 污點傳播：髒資料經多次賦值仍追得到
+# 污點傳播：髒資料經拼接後多次賦值仍追得到
 def test_taint_propagates_through_assignments():
     code = '''def handler(name):
-    a = name
+    a = "SELECT " + name
     b = a
     cursor.execute(b)
 '''
     findings = _taint(code)
-    assert len(findings) == 1   # name → a → b → execute，污點一路傳播
+    assert len(findings) == 1   # name 拼接→a(dangerous)→b→execute，污點傳播
+
+
+# 關鍵反例：參數化查詢不該報（髒變數是獨立參數、不在拼接裡）
+def test_parameterized_query_not_reported():
+    code = '''def get_user(user_input):
+    cursor.execute("SELECT * WHERE id=?", (user_input,))
+'''
+    findings = _taint(code)
+    assert len(findings) == 0   # user_input 未拼進 SQL 字串 → 安全

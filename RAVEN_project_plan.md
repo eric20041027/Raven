@@ -532,6 +532,7 @@ RAVEN v0.1.0  🪶  Risk Analysis & Vulnerability Examination Node
 **功能面**
 - 更多語言：Go、PHP、Ruby
 - 把 taint analysis 從「一條規則」推廣到多條規則
+- **taint sanitizer（消毒器）概念**：標記「參數化查詢」「跳脫函式」等安全路徑，髒資料經過後變乾淨（M4 用「髒且在拼接裡」近似，sanitizer 是更通用的正解）
 - Pre-commit hook 整合；VS Code extension 即時標記
 - 後端自動偵測（層級 3）：自動發現使用者裝了哪個後端、零設定
 

@@ -10,6 +10,7 @@ import click
 
 from raven.parser.ast_parser import AstParser, detect_language
 from raven.rules.engine import RuleEngine
+from raven.rules.taint import analyze
 from raven.reporter import cli_reporter
 from raven.llm.client import LLMClient, annotate_findings
 from raven.config import load_llm_config
@@ -57,8 +58,13 @@ def scan(path: str, llm: bool, base_url: str | None, model: str | None) -> None:
         parser = AstParser(language)
         source = file_path.read_bytes()
         tree = parser.parse_source(source)
-        # 把語言傳給引擎 —— 引擎據此把規則的概念名翻成該語言的實際節點名
-        for f in engine.scan(tree.root_node, source, language):
+        # pattern matching（引擎依語言把概念名翻成實際節點名）
+        pattern_findings = engine.scan(tree.root_node, source, language)
+        # taint analysis（目前僅 Python）
+        taint_findings = analyze(tree.root_node, source) if language == "python" else []
+        # 合併並去重：同位置的 SQL，taint 版蓋掉 pattern 版（taint 更準）
+        merged = _merge_findings(pattern_findings, taint_findings)
+        for f in merged:
             all_findings.append((file_path, f))
 
     # 可選的 LLM 解釋步驟（--llm 才啟用；client 為 None 時 annotate 原樣回傳）
@@ -68,6 +74,23 @@ def scan(path: str, llm: bool, base_url: str | None, model: str | None) -> None:
     all_findings = list(zip((fp for fp, _ in all_findings), annotated))
 
     cli_reporter.print_report(path, len(targets), len(engine.rules), all_findings)
+
+
+def _merge_findings(pattern_findings: list, taint_findings: list) -> list:
+    """合併 pattern matching 與 taint 結果，去除重複的 SQL 漏洞。
+
+    taint 比 pattern matching 準：同一行的 SQL 漏洞若 taint 也報了，
+    就用 taint 版取代 pattern 版（pattern 的 SQL-001 在該行被抑制）。
+    其他規則（Secret/cmd/eval）不受影響。
+    """
+    # taint 報告的行號集合（taint 目前只處理 SQL）
+    taint_lines = {f.line for f in taint_findings}
+    # 過濾掉「被 taint 同行覆蓋」的 pattern SQL 結果
+    kept_pattern = [
+        f for f in pattern_findings
+        if not (f.rule_id == "SQL-001" and f.line in taint_lines)
+    ]
+    return kept_pattern + taint_findings
 
 
 def _build_llm_client(enabled: bool, base_url: str | None, model: str | None):

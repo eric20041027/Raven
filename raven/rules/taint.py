@@ -43,9 +43,17 @@ def analyze(tree_root: Node, source: bytes) -> list[TaintFinding]:
 
 
 def _analyze_function(func_node: Node, source: bytes) -> list[TaintFinding]:
-    """分析單一函式：追蹤 tainted 變數，找出髒資料流進 sink 的情況。"""
+    """分析單一函式：追蹤髒變數，找出「髒資料拼進 SQL」流入 sink 的情況。
+
+    用兩個集合區分危險程度：
+      tainted     —— 髒變數（來自 source）
+      dangerous   —— 髒「且已被拼進字串」的變數（帶著危險的 SQL 片段）
+    只有 dangerous 流進 sink，或 sink 參數內直接拼接髒變數，才算漏洞。
+    這樣參數化查詢 execute(sql, (user_input,)) 會被正確放過。
+    """
     findings: list[TaintFinding] = []
     tainted: set[str] = set()
+    dangerous: set[str] = set()
 
     # ① 函式參數都是 source（外部傳入、不可信）
     params = func_node.child_by_field_name("parameters")
@@ -60,19 +68,33 @@ def _analyze_function(func_node: Node, source: bytes) -> list[TaintFinding]:
         return findings
 
     for node in iter_nodes(body):
-        # ② 賦值：右邊含髒變數 → 左邊變數也髒（污點傳播）
+        # ② 賦值：傳播污點
         if node.type == "assignment":
             left = node.child_by_field_name("left")
             right = node.child_by_field_name("right")
             if left is not None and right is not None:
+                name = node_text(left, source)
                 if _contains_tainted(right, source, tainted):
-                    tainted.add(node_text(left, source))
+                    tainted.add(name)   # 右邊含髒 → 左邊也髒
+                # 右邊是「含髒變數的拼接」，或本身用到 dangerous 變數
+                # → 左邊帶著危險 SQL 片段
+                if _is_tainted_concat(right, source, tainted) or \
+                        _contains_any(right, source, dangerous):
+                    dangerous.add(name)
 
-        # ③ 呼叫 sink，且參數含髒變數 → 報漏洞
+        # ③ 呼叫 sink，且髒變數出現在「字串拼接」裡 → 報漏洞
+        #    收緊條件（非「參數含髒變數」）：唯有把髒資料『拼進 SQL 字串』才危險。
+        #    參數化查詢 execute(sql, (user_input,)) 的 user_input 是獨立參數、
+        #    不在拼接中 → 正確放過（消除誤報）。
         if node.type == "call":
             func_name = _call_func_name(node, source)
             args = node.child_by_field_name("arguments")
-            if func_name in SINK_FUNCS and _contains_tainted(args, source, tainted):
+            # 危險條件：sink 參數內「直接拼接髒變數」，或用到 dangerous 變數
+            is_dangerous = func_name in SINK_FUNCS and (
+                _is_tainted_concat(args, source, tainted)
+                or _contains_any(args, source, dangerous)
+            )
+            if is_dangerous:
                 findings.append(TaintFinding(
                     rule_id="SQL-TAINT-001",
                     severity="HIGH",
@@ -86,11 +108,30 @@ def _analyze_function(func_node: Node, source: bytes) -> list[TaintFinding]:
 
 
 def _contains_tainted(node: Node | None, source: bytes, tainted: set[str]) -> bool:
-    """判斷一個節點的子樹裡，是否用到任何髒變數"""
+    """判斷一個節點的子樹裡，是否用到任何髒變數。"""
+    return _contains_any(node, source, tainted)
+
+
+def _contains_any(node: Node | None, source: bytes, names: set[str]) -> bool:
+    """判斷子樹裡是否用到 names 集合中的任何變數。"""
     if node is None:
         return False
     for n in iter_nodes(node):
-        if n.type == "identifier" and node_text(n, source) in tainted:
+        if n.type == "identifier" and node_text(n, source) in names:
+            return True
+    return False
+
+
+def _is_tainted_concat(node: Node | None, source: bytes, tainted: set[str]) -> bool:
+    """判斷子樹裡是否有「含髒變數的字串拼接」（binary_operator 內用到髒變數）。
+
+    這是 SQL injection 的危險本質：把髒資料拼進 SQL 字串。
+    參數化查詢的髒變數是獨立引數、不在 binary_operator 內 → 回 False。
+    """
+    if node is None:
+        return False
+    for n in iter_nodes(node):
+        if n.type == "binary_operator" and _contains_tainted(n, source, tainted):
             return True
     return False
 
