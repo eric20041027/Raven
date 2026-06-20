@@ -549,7 +549,7 @@ RAVEN v0.1.0  🪶  Risk Analysis & Vulnerability Examination Node
 ---
 
 *文件最後更新：2026-06-17*
-*專案狀態：M1 ✅、M2 ✅、M3 ✅ 完成；下一步 M4（taint analysis）或 M5（收尾）*
+*專案狀態：M1 ✅、M2 ✅、M3 ✅、M4 ✅ 完成；下一步 M5（收尾：HTML/JSON 報告、GitHub 輸入、CI）*
 *v1 原版備份：`RAVEN_project_plan.original.md`*
 
 ---
@@ -564,5 +564,5 @@ RAVEN v0.1.0  🪶  Risk Analysis & Vulnerability Examination Node
 | M2 規則引擎 | ✅ | YAML 引擎(TDD)、handler 分派架構、4 條規則(Secret/SQLi/cmd/eval)、rich 彩色報告、語言抽象層(Python+JS)。16 測試綠 |
 | M3 LLM 解釋層 | ✅ | LLMClient(後端可設定)、config、--llm flag、reporter 顯示 AI 解釋、優雅降級。mock 測試。21 測試綠 |
 | 真實掃描修正 | ✅ | 掃 . 撞見 1476 誤報 → 排除依賴目錄(.venv 等) → 16；移除過弱的 value_min_length 規則 → 8。親身體會 pattern matching 誤報問題（預示 M4）|
-| M4 Taint Analysis | ⬜ | 待開始 |
+| M4 Taint Analysis | ✅ | 單函式內污點追蹤(source→傳播→sink)、收緊為「髒資料拼進SQL才報」(放過參數化查詢)、接進CLI+與pattern去重。實證比pattern準。26測試綠 |
 | M5 收尾 | ⬜ | 待開始 |
