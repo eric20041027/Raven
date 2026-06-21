@@ -31,6 +31,9 @@ class TaintFinding:
 SOURCE_FUNCS = {"input", "get", "recv", "read"}
 # 危險匯點函式（髒資料流進這些 → 漏洞）
 SINK_FUNCS = {"execute", "query", "raw", "executemany"}
+# 清洗函式（髒資料經這些 → 洗白、不再危險）
+# escape/quote 跳脫特殊字元；parameterize 等代表參數化處理。
+SANITIZER_FUNCS = {"escape", "quote", "escape_string", "parameterize", "sanitize"}
 
 
 def analyze(tree_root: Node, source: bytes) -> list[TaintFinding]:
@@ -40,6 +43,20 @@ def analyze(tree_root: Node, source: bytes) -> list[TaintFinding]:
         if node.type == "function_definition":
             findings.extend(_analyze_function(node, source))
     return findings
+
+
+def sink_lines(tree_root: Node, source: bytes) -> set[int]:
+    """回報所有 SQL sink 呼叫的行號 —— 即 taint 分析「已裁決」的行。
+
+    用途：合併 pattern 與 taint 結果時，taint 在這些行上有發言權（含它
+    判定為安全、刻意不報的行，如 sanitizer 洗白或參數化查詢）。pattern
+    matching 不懂資料流，這些行應讓位給 taint 的裁決。
+    """
+    lines: set[int] = set()
+    for node in iter_nodes(tree_root):
+        if node.type == "call" and _call_func_name(node, source) in SINK_FUNCS:
+            lines.add(node.start_point[0] + 1)
+    return lines
 
 
 def _analyze_function(func_node: Node, source: bytes) -> list[TaintFinding]:
@@ -74,6 +91,14 @@ def _analyze_function(func_node: Node, source: bytes) -> list[TaintFinding]:
             right = node.child_by_field_name("right")
             if left is not None and right is not None:
                 name = node_text(left, source)
+                # 右邊整個就是一個 sanitizer 呼叫（如 escape(x)）→ 洗白。
+                # 保守立場：只認「整個值來自 sanitizer」，escape(x)+tail 不算
+                # （tail 可能仍帶危險）。洗白時要從兩個集合移除，處理重新賦值
+                # （x = escape(x)）把原本髒的變數洗乾淨的情況。
+                if _is_sanitizer_call(right, source):
+                    tainted.discard(name)
+                    dangerous.discard(name)
+                    continue
                 if _contains_tainted(right, source, tainted):
                     tainted.add(name)   # 右邊含髒 → 左邊也髒
                 # 右邊是「含髒變數的拼接」，或本身用到 dangerous 變數
@@ -127,13 +152,52 @@ def _is_tainted_concat(node: Node | None, source: bytes, tainted: set[str]) -> b
 
     這是 SQL injection 的危險本質：把髒資料拼進 SQL 字串。
     參數化查詢的髒變數是獨立引數、不在 binary_operator 內 → 回 False。
+
+    sanitizer 感知：拼接裡的髒變數若被 sanitizer 呼叫包住（如 "..." +
+    escape(u)），視為已洗白、不算危險拼接。
     """
     if node is None:
         return False
     for n in iter_nodes(node):
-        if n.type == "binary_operator" and _contains_tainted(n, source, tainted):
+        if n.type == "binary_operator" and _has_unsanitized_taint(n, source, tainted):
             return True
     return False
+
+
+def _has_unsanitized_taint(node: Node, source: bytes, tainted: set[str]) -> bool:
+    """子樹裡是否有「未被 sanitizer 包住」的髒變數。
+
+    走訪每個髒 identifier，檢查它到 node 之間的祖先鏈上有沒有 sanitizer
+    呼叫；有就代表這個髒變數已被洗白，不計入危險。
+    """
+    for n in iter_nodes(node):
+        if n.type == "identifier" and node_text(n, source) in tainted:
+            if not _wrapped_by_sanitizer(n, source, node):
+                return True
+    return False
+
+
+def _wrapped_by_sanitizer(ident: Node, source: bytes, stop: Node) -> bool:
+    """ident 到 stop（含）之間的祖先鏈上，是否有 sanitizer 函式呼叫。"""
+    cur = ident.parent
+    while cur is not None:
+        if cur.type == "call" and _call_func_name(cur, source) in SANITIZER_FUNCS:
+            return True
+        if cur == stop:
+            break
+        cur = cur.parent
+    return False
+
+
+def _is_sanitizer_call(node: Node | None, source: bytes) -> bool:
+    """節點「整個就是」一個 sanitizer 函式呼叫（如 escape(x)）。
+
+    保守判斷：只認單一 call 節點，escape(x)+tail 這種拼接不算
+    （最外層是 binary_operator，不是 call）。
+    """
+    if node is None or node.type != "call":
+        return False
+    return _call_func_name(node, source) in SANITIZER_FUNCS
 
 
 def _call_func_name(call_node: Node, source: bytes) -> str:

@@ -12,7 +12,7 @@ import click
 
 from raven.parser.ast_parser import AstParser, detect_language
 from raven.rules.engine import RuleEngine
-from raven.rules.taint import analyze
+from raven.rules.taint import analyze, sink_lines
 from raven.reporter import cli_reporter, json_reporter, html_reporter
 from raven.llm.client import LLMClient, annotate_findings
 from raven.config import load_llm_config
@@ -92,9 +92,12 @@ def _scan_directory(display_name: str, scan_root: str, llm: bool,
         # pattern matching（引擎依語言把概念名翻成實際節點名）
         pattern_findings = engine.scan(tree.root_node, source, language)
         # taint analysis（目前僅 Python）
-        taint_findings = analyze(tree.root_node, source) if language == "python" else []
-        # 合併並去重：同位置的 SQL，taint 版蓋掉 pattern 版（taint 更準）
-        merged = _merge_findings(pattern_findings, taint_findings)
+        is_python = language == "python"
+        taint_findings = analyze(tree.root_node, source) if is_python else []
+        # taint 已裁決的 SQL sink 行（含它判定安全、刻意不報的行）
+        decided_lines = sink_lines(tree.root_node, source) if is_python else set()
+        # 合併：taint 裁決過的行，pattern SQL-001 一律讓位給 taint（taint 更準）
+        merged = _merge_findings(pattern_findings, taint_findings, decided_lines)
         for f in merged:
             all_findings.append((file_path, f))
 
@@ -126,19 +129,18 @@ def _emit_html(display_name: str, file_count: int, rule_count: int,
         click.echo(document)
 
 
-def _merge_findings(pattern_findings: list, taint_findings: list) -> list:
-    """合併 pattern matching 與 taint 結果，去除重複的 SQL 漏洞。
+def _merge_findings(pattern_findings: list, taint_findings: list,
+                    decided_lines: set[int]) -> list:
+    """合併 pattern matching 與 taint 結果，去除重複/誤報的 SQL 漏洞。
 
-    taint 比 pattern matching 準：同一行的 SQL 漏洞若 taint 也報了，
-    就用 taint 版取代 pattern 版（pattern 的 SQL-001 在該行被抑制）。
-    其他規則（Secret/cmd/eval）不受影響。
+    taint 比 pattern matching 準（懂 sanitizer / 參數化）：凡是 taint
+    「裁決過」的 SQL sink 行（decided_lines），該行的 pattern SQL-001 一律
+    讓位給 taint —— 包含 taint 判定為安全、刻意不報的行（否則 pattern 的
+    結構誤報會漏出來）。其他規則（Secret/cmd/eval）不受影響。
     """
-    # taint 報告的行號集合（taint 目前只處理 SQL）
-    taint_lines = {f.line for f in taint_findings}
-    # 過濾掉「被 taint 同行覆蓋」的 pattern SQL 結果
     kept_pattern = [
         f for f in pattern_findings
-        if not (f.rule_id == "SQL-001" and f.line in taint_lines)
+        if not (f.rule_id == "SQL-001" and f.line in decided_lines)
     ]
     return kept_pattern + taint_findings
 
