@@ -13,6 +13,7 @@ import click
 from raven.parser.ast_parser import AstParser, detect_language
 from raven.rules.engine import RuleEngine
 from raven.rules.taint import analyze, sink_lines
+from raven.rules.interproc import analyze_interproc
 from raven.reporter import cli_reporter, json_reporter, html_reporter
 from raven.llm.client import LLMClient, annotate_findings
 from raven.config import load_llm_config
@@ -94,10 +95,13 @@ def _scan_directory(display_name: str, scan_root: str, llm: bool,
         # taint analysis（目前僅 Python）
         is_python = language == "python"
         taint_findings = analyze(tree.root_node, source) if is_python else []
+        # inter-procedural taint：跨函式追蹤（目前僅 Python）
+        ip_findings = analyze_interproc(tree.root_node, source) if is_python else []
         # taint 已裁決的 SQL sink 行（含它判定安全、刻意不報的行）
         decided_lines = sink_lines(tree.root_node, source) if is_python else set()
-        # 合併：taint 裁決過的行，pattern SQL-001 一律讓位給 taint（taint 更準）
-        merged = _merge_findings(pattern_findings, taint_findings, decided_lines)
+        # 合併三個 SQL 引擎，同行只留最強者（IP > 單函式 > pattern）
+        merged = _merge_findings(pattern_findings, taint_findings,
+                                 ip_findings, decided_lines)
         for f in merged:
             all_findings.append((file_path, f))
 
@@ -129,20 +133,43 @@ def _emit_html(display_name: str, file_count: int, rule_count: int,
         click.echo(document)
 
 
-def _merge_findings(pattern_findings: list, taint_findings: list,
-                    decided_lines: set[int]) -> list:
-    """合併 pattern matching 與 taint 結果，去除重複/誤報的 SQL 漏洞。
+# SQL 漏洞規則的優先級（數字越大越準）：跨函式 > 單函式 taint > pattern。
+# 同一行多個 SQL 規則命中時，只留優先級最高的那個。
+_SQL_RULE_PRIORITY = {
+    "SQL-001": 1,            # pattern matching（只看形狀）
+    "SQL-TAINT-001": 2,     # 單函式 taint（懂資料流 / sanitizer）
+    "SQL-TAINT-IP-001": 3,  # inter-procedural（跨函式追蹤，資訊最完整）
+}
 
-    taint 比 pattern matching 準（懂 sanitizer / 參數化）：凡是 taint
-    「裁決過」的 SQL sink 行（decided_lines），該行的 pattern SQL-001 一律
-    讓位給 taint —— 包含 taint 判定為安全、刻意不報的行（否則 pattern 的
-    結構誤報會漏出來）。其他規則（Secret/cmd/eval）不受影響。
+
+def _merge_findings(pattern_findings: list, taint_findings: list,
+                    ip_findings: list, decided_lines: set[int]) -> list:
+    """合併三個 SQL 引擎（pattern / 單函式 taint / 跨函式）的結果並去重。
+
+    規則：
+      1. 同一行的 SQL 漏洞只留最強者（_SQL_RULE_PRIORITY：IP > 單函式 > pattern），
+         讓使用者在每行只看到資訊最完整的那一個。
+      2. taint「裁決過」的 sink 行（decided_lines）若 taint 判安全、刻意不報，
+         該行的 pattern SQL-001 也要讓位（否則 pattern 的結構誤報會漏出）。
+      3. 非 SQL 規則（Secret/cmd/eval）完全不受影響。
     """
-    kept_pattern = [
-        f for f in pattern_findings
-        if not (f.rule_id == "SQL-001" and f.line in decided_lines)
-    ]
-    return kept_pattern + taint_findings
+    sql_findings = [f for f in pattern_findings + taint_findings + ip_findings
+                    if f.rule_id in _SQL_RULE_PRIORITY]
+    others = [f for f in pattern_findings + taint_findings + ip_findings
+              if f.rule_id not in _SQL_RULE_PRIORITY]
+
+    # 每行只保留優先級最高的 SQL finding。
+    best_per_line: dict[int, object] = {}
+    for f in sql_findings:
+        # taint 已判安全的行，pattern SQL-001 直接略過（讓位給 taint 的裁決）。
+        if f.rule_id == "SQL-001" and f.line in decided_lines:
+            continue
+        current = best_per_line.get(f.line)
+        if current is None or \
+                _SQL_RULE_PRIORITY[f.rule_id] > _SQL_RULE_PRIORITY[current.rule_id]:
+            best_per_line[f.line] = f
+
+    return others + list(best_per_line.values())
 
 
 def _build_llm_client(enabled: bool, base_url: str | None, model: str | None):
