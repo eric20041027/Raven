@@ -28,7 +28,7 @@ RAVEN 用 [tree-sitter](https://tree-sitter.github.io/tree-sitter/) 把程式碼
 
 RAVEN 是一個**學習導向的實驗性專案**，用來實作並理解 SAST 的核心概念（AST 解析、規則引擎、taint analysis、LLM 整合）。它**不是生產級工具**，請勿用於真實的安全稽核或在正式環境取代成熟的 SAST 產品。
 
-偵測能力刻意保持精簡與透明：規則集小、taint analysis 為 intra-procedural（單一函式內），目的是把每個概念實作清楚、可驗證，而非追求覆蓋率。
+偵測能力刻意保持精簡與透明：規則集小、taint analysis 涵蓋單一函式內到跨函式（inter-procedural）的污染追蹤，目的是把每個概念實作清楚、可驗證，而非追求覆蓋率。
 
 ---
 
@@ -186,13 +186,19 @@ ollama serve
 | 漏洞 | CWE | 偵測法 | 狀態 |
 |------|-----|--------|------|
 | Hardcoded Secret | CWE-798 | pattern matching + Shannon 熵 | ✅ |
-| SQL Injection | CWE-89 | pattern matching + taint analysis（含 sanitizer 感知） | ✅ |
+| SQL Injection | CWE-89 | pattern + taint（單函式 + 跨函式，含 sanitizer 感知） | ✅ |
 | Command Injection | CWE-78 | pattern matching | ✅ |
 | Unsafe eval | CWE-95 | pattern matching | ✅ |
 
 支援語言：**Python**（pattern + taint）、**JavaScript**（pattern）。
 
-taint analysis 的資料流模型：**source**（函式參數、輸入函式）→ **sanitizer**（`escape`/`quote` 等洗白）→ **sink**（`execute`/`query` 等）。髒資料經 sanitizer 洗白後不再視為危險（目前為 intra-procedural，單一函式內）。
+taint analysis 的資料流模型：**source**（函式參數、輸入函式）→ **sanitizer**（`escape`/`quote` 等洗白）→ **sink**（`execute`/`query` 等）。髒資料經 sanitizer 洗白後不再視為危險。
+
+涵蓋兩個層次：
+- **單函式內（intra-procedural）**：含 sanitizer 感知、參數化查詢辨識。
+- **跨函式（inter-procedural）**：用 function summary（函式摘要）+ fixpoint（定點疊代）追蹤橫跨多個函式的漏洞鏈（如 source 在 A 函式進入、傳給 B 函式才拼進 SQL），正確處理遞迴與互相呼叫。
+
+同一行若多個 SQL 引擎命中，只保留資訊最完整的（inter-procedural > 單函式 taint > pattern）。
 
 ---
 
